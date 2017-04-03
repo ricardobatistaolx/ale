@@ -44,6 +44,26 @@ Execute(Basic errors should be returned for GCC for C files):
   Assert match(getloclist(0)[0].text, '\v^expected .*;.* before .*\}.* token$') >= 0,
   \ 'Invalid error text: ' .  getloclist(0)[0].text
 
+Given c (A test C file with a broken header file):
+  #include "broken.h"
+
+  int main() {
+    return 0
+  }
+
+Execute(Basic errors should be returned for GCC for C files):
+  call ale#Lint()
+
+  AssertEqual [{
+  \   'lnum': 3,
+  \   'col': 1,
+  \ }],
+  \ map(getloclist(0), '{''lnum'': v:val.lnum, ''col'': v:val.col}'),
+  \ 'No errors returned! Got: ' . GetCommandOutput()
+
+  Assert match(getloclist(0)[0].text, '\v^expected .*;.* before .*\}.* token$') >= 0,
+  \ 'Invalid error text: ' .  getloclist(0)[0].text
+
 Given cpp (A test C++ file):
   int main() {
     return 0

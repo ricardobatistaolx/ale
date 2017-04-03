@@ -46,28 +46,46 @@ function! ale#handlers#HandleUnixFormatAsWarning(buffer, lines) abort
 endfunction
 
 function! ale#handlers#HandleGCCFormat(buffer, lines) abort
+    let l:include_pattern = '\v^In file included from .*:(\d+):'
+    let l:last_include_line = 0
+    let l:include_lines = []
     " Look for lines like the following.
     "
     " <stdin>:8:5: warning: conversion lacks type at end of format [-Wformat=]
     " <stdin>:10:27: error: invalid operands to binary - (have ‘int’ and ‘char *’)
     " -:189:7: note: $/${} is unnecessary on arithmetic variables. [SC2004]
-    let l:pattern = '^.\+:\(\d\+\):\(\d\+\): \([^:]\+\): \(.\+\)$'
+    let l:pattern = '^(.\+):\(\d\+\):\(\d\+\): \([^:]\+\): \(.\+\)$'
     let l:output = []
 
     for l:line in a:lines
         let l:match = matchlist(l:line, l:pattern)
 
-        if len(l:match) == 0
+        " Skip over empty matches, or header files.
+        if len(l:match) == 0 || l:match[1] =~# '\v(\.h|.hpp)$'
+            " if we found an 'In file included from' line, then
+            " bundle these errors together at the header line.
+            if l:last_include_line > 0
+                call add(l:include_lines, l:line)
+            else
+                let l:match = matchlist(l:line, l:include_pattern)
+
+                if !empty(l:match)
+                    let l:last_include_line = str2nr(l:match[1])
+                endif
+            endif
+
             continue
         endif
 
+        let l:last_include_line = 0
+
         call add(l:output, {
         \   'bufnr': a:buffer,
-        \   'lnum': l:match[1] + 0,
+        \   'lnum': l:match[2] + 0,
         \   'vcol': 0,
-        \   'col': l:match[2] + 0,
-        \   'text': l:match[4],
-        \   'type': l:match[3] =~# 'error' ? 'E' : 'W',
+        \   'col': l:match[3] + 0,
+        \   'type': l:match[4] =~# 'error' ? 'E' : 'W',
+        \   'text': l:match[5],
         \   'nr': -1,
         \})
     endfor
