@@ -61,7 +61,10 @@ function! ale#Lint(...) abort
         return
     endif
 
+    " TODO: Get buffer number from script-scoped map.
     let l:buffer = bufnr('%')
+    " TODO: Pass the buffer number instead of the filetype?
+    " Make sure this can be done without it being a breaking change.
     let l:linters = ale#linter#Get(&filetype)
     let l:should_lint_file = 0
 
