@@ -5,11 +5,11 @@ scriptencoding utf8
 let b:dummy_sign_set_map = {}
 
 if !hlexists('ALEErrorSign')
-    highlight link ALEErrorSign error
+    execute ale#font#GetSuportedDefaultErrorHighlight()
 endif
 
 if !hlexists('ALEWarningSign')
-    highlight link ALEWarningSign todo
+    execute ale#font#GetSuportedDefaultWarningHighlight()
 endif
 
 " Signs show up on the left for error markers.
