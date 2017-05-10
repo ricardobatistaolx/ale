@@ -26,21 +26,6 @@ function! s:IsExecutable(executable) abort
     return  0
 endfunction
 
-function! ale#engine#ParseVim8ProcessID(job_string) abort
-    return matchstr(a:job_string, '\d\+') + 0
-endfunction
-
-function! s:GetJobID(job) abort
-    if has('nvim')
-        "In NeoVim, job values are just IDs.
-        return a:job
-    endif
-
-    " For Vim 8, the job is a different variable type, and we can parse the
-    " process ID from the string.
-    return ale#engine#ParseVim8ProcessID(string(a:job))
-endfunction
-
 function! ale#engine#InitBufferInfo(buffer) abort
     if !has_key(g:ale_buffer_info, a:buffer)
         " job_list will hold the list of jobs
@@ -63,54 +48,6 @@ function! ale#engine#InitBufferInfo(buffer) abort
     endif
 endfunction
 
-" A map from timer IDs to Vim 8 jobs, for tracking jobs that need to be killed
-" with SIGKILL if they don't terminate right away.
-let s:job_kill_timers = {}
-
-" Check if a job is still running, in either Vim version.
-function! s:IsJobRunning(job) abort
-    if has('nvim')
-        try
-            " In NeoVim, if the job isn't running, jobpid() will throw.
-            call jobpid(a:job)
-            return 1
-        catch
-        endtry
-
-        return 0
-    endif
-
-    return job_status(a:job) ==# 'run'
-endfunction
-
-function! s:KillHandler(timer) abort
-    let l:job = remove(s:job_kill_timers, a:timer)
-
-    " For NeoVim, we have to send SIGKILL ourselves manually, as NeoVim
-    " doesn't do it properly.
-    if has('nvim')
-        let l:pid = 0
-
-        " We can fail to get the PID here if the job manages to stop already.
-        try
-            let l:pid = jobpid(l:job)
-        catch
-        endtry
-
-        if l:pid > 0
-            if has('win32')
-                " Windows
-                call system('taskkill /pid ' . l:pid . ' /f')
-            else
-                " Linux, Mac OSX, etc.
-                call system('kill -9 ' . l:pid)
-            endif
-        endif
-    else
-        call job_stop(l:job, 'kill')
-    endif
-endfunction
-
 function! ale#engine#ClearJob(job) abort
     if get(g:, 'ale_run_synchronously') == 1
         call remove(s:job_info_map, a:job)
@@ -118,26 +55,9 @@ function! ale#engine#ClearJob(job) abort
         return
     endif
 
-    let l:job_id = s:GetJobID(a:job)
+    let l:job_id = ale#job#GetID(a:job)
 
-    if has('nvim')
-        call jobstop(a:job)
-    else
-        " We must close the channel for reading the buffer if it is open
-        " when stopping a job. Otherwise, we will get errors in the status line.
-        if ch_status(job_getchannel(a:job)) ==# 'open'
-            call ch_close_in(job_getchannel(a:job))
-        endif
-
-        " Ask nicely for the job to stop.
-        call job_stop(a:job)
-    endif
-
-    " If a job doesn't stop immediately, queue a timer which will
-    " send SIGKILL to the job, if it's alive by the time the timer ticks.
-    if s:IsJobRunning(a:job)
-        let s:job_kill_timers[timer_start(100, function('s:KillHandler'))] = a:job
-    endif
+    call ale#job#Stop(a:job)
 
     if has_key(s:job_info_map, l:job_id)
         call remove(s:job_info_map, l:job_id)
@@ -153,7 +73,7 @@ function! s:StopPreviousJobs(buffer, linter) abort
     let l:new_job_list = []
 
     for l:job in g:ale_buffer_info[a:buffer].job_list
-        let l:job_id = s:GetJobID(l:job)
+        let l:job_id = ale#job#GetID(l:job)
 
         if has_key(s:job_info_map, l:job_id)
         \&& s:job_info_map[l:job_id].linter.name ==# a:linter.name
@@ -167,41 +87,6 @@ function! s:StopPreviousJobs(buffer, linter) abort
 
     " Update the list, removing the previously run job.
     let g:ale_buffer_info[a:buffer].job_list = l:new_job_list
-endfunction
-
-function! s:GatherOutputVim(channel, data) abort
-    let l:job_id = s:GetJobID(ch_getjob(a:channel))
-
-    if !has_key(s:job_info_map, l:job_id)
-        return
-    endif
-
-    call add(s:job_info_map[l:job_id].output, a:data)
-endfunction
-
-function! s:GatherOutputNeoVim(job, data, event) abort
-    let l:job_id = s:GetJobID(a:job)
-
-    if !has_key(s:job_info_map, l:job_id)
-        return
-    endif
-
-    " Join the lines passed to ale, because Neovim splits them up.
-    " a:data is a list of strings, where every item is a new line, except the
-    " first one, which is the continuation of the last item passed last time.
-    call ale#engine#JoinNeovimOutput(s:job_info_map[l:job_id].output, a:data)
-endfunction
-
-function! ale#engine#JoinNeovimOutput(output, data) abort
-    if empty(a:output)
-        call extend(a:output, a:data)
-    else
-        " Extend the previous line, which can be continued.
-        let a:output[-1] .= get(a:data, 0, '')
-
-        " Add the new lines.
-        call extend(a:output, a:data[1:])
-    endif
 endfunction
 
 " Register a temporary file to be managed with the ALE engine for
@@ -255,13 +140,21 @@ function! ale#engine#RemoveManagedFiles(buffer) abort
     let g:ale_buffer_info[a:buffer].temporary_directory_list = []
 endfunction
 
-function! s:HandleExit(job) abort
+function! s:GatherOutput(job, line) abort
+    let l:job_id = ale#job#GetID(a:job)
+
+    if has_key(s:job_info_map, l:job_id)
+        call add(s:job_info_map[l:job_id].output, a:line)
+    endif
+endfunction
+
+function! s:HandleExit(job, exit_code) abort
     if a:job ==# 'no process'
         " Stop right away when the job is not valid in Vim 8.
         return
     endif
 
-    let l:job_id = s:GetJobID(a:job)
+    let l:job_id = ale#job#GetID(a:job)
 
     if !has_key(s:job_info_map, l:job_id)
         return
@@ -272,6 +165,10 @@ function! s:HandleExit(job) abort
     let l:output = l:job_info.output
     let l:buffer = l:job_info.buffer
     let l:next_chain_index = l:job_info.next_chain_index
+
+    if g:ale_history_enabled
+        call ale#history#SetExitCode(l:buffer, l:job_id, a:exit_code)
+    endif
 
     " Call the same function for stopping jobs again to clean up the job
     " which just closed.
@@ -362,36 +259,6 @@ function! ale#engine#SetResults(buffer, loclist) abort
         " This will only do something meaningful if we're in normal mode.
         call ale#cursor#EchoCursorWarning()
     endif
-endfunction
-
-function! s:SetExitCode(job, exit_code) abort
-    let l:job_id = s:GetJobID(a:job)
-
-    if !has_key(s:job_info_map, l:job_id)
-        return
-    endif
-
-    let l:buffer = s:job_info_map[l:job_id].buffer
-
-    call ale#history#SetExitCode(l:buffer, l:job_id, a:exit_code)
-endfunction
-
-function! s:HandleExitNeoVim(job, exit_code, event) abort
-    if g:ale_history_enabled
-        call s:SetExitCode(a:job, a:exit_code)
-    endif
-
-    call s:HandleExit(a:job)
-endfunction
-
-function! s:HandleExitVim(channel) abort
-    call s:HandleExit(ch_getjob(a:channel))
-endfunction
-
-" Vim returns the exit status with one callback,
-" and the channel will close later in another callback.
-function! s:HandleExitStatusVim(job, exit_code) abort
-    call s:SetExitCode(a:job, a:exit_code)
 endfunction
 
 function! ale#engine#FixLocList(buffer, linter, loclist) abort
@@ -538,15 +405,29 @@ function! s:RunJob(options) abort
         let l:read_buffer = 0
     endif
 
-    if !has('nvim')
-        " The command will be executed in a subshell. This fixes a number of
-        " issues, including reading the PATH variables correctly, %PATHEXT%
-        " expansion on Windows, etc.
-        "
-        " NeoVim handles this issue automatically if the command is a String.
-        let l:command = has('win32')
-        \   ?  'cmd /c ' . l:command
-        \   : split(&shell) + split(&shellcmdflag) + [l:command]
+    " The command will be executed in a subshell. This fixes a number of
+    " issues, including reading the PATH variables correctly, %PATHEXT%
+    " expansion on Windows, etc.
+    "
+    " NeoVim handles this issue automatically if the command is a String,
+    " but we'll do this explicitly, so we use thes same exact command for both
+    " versions.
+    let l:command = has('win32')
+    \   ?  'cmd /c ' . l:command
+    \   : split(&shell) + split(&shellcmdflag) + [l:command]
+
+    let l:job_options = {
+    \   'mode': 'nl',
+    \   'exit_cb': function('s:HandleExit'),
+    \}
+
+    if l:output_stream ==# 'stderr'
+        let l:job_options.err_cb = function('s:GatherOutput')
+    elseif l:output_stream ==# 'both'
+        let l:job_options.out_cb = function('s:GatherOutput')
+        let l:job_options.err_cb = function('s:GatherOutput')
+    else
+        let l:job_options.out_cb = function('s:GatherOutput')
     endif
 
     if get(g:, 'ale_run_synchronously') == 1
@@ -557,66 +438,21 @@ function! s:RunJob(options) abort
         while has_key(s:job_info_map, l:job)
             let l:job += 1
         endwhile
-    elseif has('nvim')
-        if l:output_stream ==# 'stderr'
-            " Read from stderr instead of stdout.
-            let l:job = jobstart(l:command, {
-            \   'on_stderr': function('s:GatherOutputNeoVim'),
-            \   'on_exit': function('s:HandleExitNeoVim'),
-            \})
-        elseif l:output_stream ==# 'both'
-            let l:job = jobstart(l:command, {
-            \   'on_stdout': function('s:GatherOutputNeoVim'),
-            \   'on_stderr': function('s:GatherOutputNeoVim'),
-            \   'on_exit': function('s:HandleExitNeoVim'),
-            \})
-        else
-            let l:job = jobstart(l:command, {
-            \   'on_stdout': function('s:GatherOutputNeoVim'),
-            \   'on_exit': function('s:HandleExitNeoVim'),
-            \})
-        endif
+        let l:job_id = l:job
     else
-        let l:job_options = {
-        \   'in_mode': 'nl',
-        \   'out_mode': 'nl',
-        \   'err_mode': 'nl',
-        \   'close_cb': function('s:HandleExitVim'),
-        \}
-
-        if g:ale_history_enabled
-            " We only need to capture the exit status if we are going to
-            " save it in the history. Otherwise, we don't care.
-            let l:job_options.exit_cb = function('s:HandleExitStatusVim')
-        endif
-
-        if l:output_stream ==# 'stderr'
-            " Read from stderr instead of stdout.
-            let l:job_options.err_cb = function('s:GatherOutputVim')
-        elseif l:output_stream ==# 'both'
-            " Read from both streams.
-            let l:job_options.out_cb = function('s:GatherOutputVim')
-            let l:job_options.err_cb = function('s:GatherOutputVim')
-        else
-            let l:job_options.out_cb = function('s:GatherOutputVim')
-        endif
-
-        " Vim 8 will read the stdin from the file's buffer.
-        let l:job = job_start(l:command, l:job_options)
+        let l:job = ale#job#Start(l:command, l:job_options)
+        let l:job_id = ale#job#GetID(l:job)
     endif
 
     let l:status = 'failed'
-    let l:job_id = 0
 
     " Only proceed if the job is being run.
-    if has('nvim')
-    \ || get(g:, 'ale_run_synchronously') == 1
-    \ || (l:job !=# 'no process' && job_status(l:job) ==# 'run')
+    if l:job_id
         " Add the job to the list of jobs, so we can track them.
         call add(g:ale_buffer_info[l:buffer].job_list, l:job)
 
         let l:status = 'started'
-        let l:job_id = s:GetJobID(l:job)
+        let l:job_id = ale#job#GetID(l:job)
         " Store the ID for the job in the map to read back again.
         let s:job_info_map[l:job_id] = {
         \   'linter': l:linter,
@@ -639,7 +475,9 @@ function! s:RunJob(options) abort
         \   ?  join(l:command[0:1]) . ' ' . shellescape(l:command[2])
         \   : l:command
         \)
-        call s:HandleExit(l:job)
+
+        " TODO, get the exit system of the shell call and pass it on here.
+        call l:job_options.exit_cb(l:job, 0)
     endif
 endfunction
 
