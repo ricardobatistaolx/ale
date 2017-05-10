@@ -48,19 +48,17 @@ function! ale#engine#InitBufferInfo(buffer) abort
     endif
 endfunction
 
-function! ale#engine#ClearJob(job) abort
+function! ale#engine#ClearJob(job_id) abort
     if get(g:, 'ale_run_synchronously') == 1
-        call remove(s:job_info_map, a:job)
+        call remove(s:job_info_map, a:job_id)
 
         return
     endif
 
-    let l:job_id = ale#job#GetID(a:job)
+    call ale#job#Stop(a:job_id)
 
-    call ale#job#Stop(a:job)
-
-    if has_key(s:job_info_map, l:job_id)
-        call remove(s:job_info_map, l:job_id)
+    if has_key(s:job_info_map, a:job_id)
+        call remove(s:job_info_map, a:job_id)
     endif
 endfunction
 
@@ -72,16 +70,14 @@ function! s:StopPreviousJobs(buffer, linter) abort
 
     let l:new_job_list = []
 
-    for l:job in g:ale_buffer_info[a:buffer].job_list
-        let l:job_id = ale#job#GetID(l:job)
-
+    for l:job_id in g:ale_buffer_info[a:buffer].job_list
         if has_key(s:job_info_map, l:job_id)
         \&& s:job_info_map[l:job_id].linter.name ==# a:linter.name
             " Stop jobs which match the buffer and linter.
-            call ale#engine#ClearJob(l:job)
+            call ale#engine#ClearJob(l:job_id)
         else
             " Keep other jobs in the list.
-            call add(l:new_job_list, l:job)
+            call add(l:new_job_list, l:job_id)
         endif
     endfor
 
@@ -140,34 +136,25 @@ function! ale#engine#RemoveManagedFiles(buffer) abort
     let g:ale_buffer_info[a:buffer].temporary_directory_list = []
 endfunction
 
-function! s:GatherOutput(job, line) abort
-    let l:job_id = ale#job#GetID(a:job)
-
-    if has_key(s:job_info_map, l:job_id)
-        call add(s:job_info_map[l:job_id].output, a:line)
+function! s:GatherOutput(job_id, line) abort
+    if has_key(s:job_info_map, a:job_id)
+        call add(s:job_info_map[a:job_id].output, a:line)
     endif
 endfunction
 
-function! s:HandleExit(job, exit_code) abort
-    if a:job ==# 'no process'
-        " Stop right away when the job is not valid in Vim 8.
+function! s:HandleExit(job_id, exit_code) abort
+    if !has_key(s:job_info_map, a:job_id)
         return
     endif
 
-    let l:job_id = ale#job#GetID(a:job)
-
-    if !has_key(s:job_info_map, l:job_id)
-        return
-    endif
-
-    let l:job_info = s:job_info_map[l:job_id]
+    let l:job_info = s:job_info_map[a:job_id]
     let l:linter = l:job_info.linter
     let l:output = l:job_info.output
     let l:buffer = l:job_info.buffer
     let l:next_chain_index = l:job_info.next_chain_index
 
     if g:ale_history_enabled
-        call ale#history#SetExitCode(l:buffer, l:job_id, a:exit_code)
+        call ale#history#SetExitCode(l:buffer, a:job_id, a:exit_code)
     endif
 
     " Call the same function for stopping jobs again to clean up the job
@@ -187,7 +174,7 @@ function! s:HandleExit(job, exit_code) abort
 
     " Log the output of the command for ALEInfo if we should.
     if g:ale_history_enabled && g:ale_history_log_output
-        call ale#history#RememberOutput(l:buffer, l:job_id, l:output[:])
+        call ale#history#RememberOutput(l:buffer, a:job_id, l:output[:])
     endif
 
     let l:linter_loclist = ale#util#GetFunction(l:linter.callback)(l:buffer, l:output)
@@ -433,15 +420,13 @@ function! s:RunJob(options) abort
     if get(g:, 'ale_run_synchronously') == 1
         " Find a unique Job value to use, which will be the same as the ID for
         " running commands synchronously. This is only for test code.
-        let l:job = len(s:job_info_map) + 1
+        let l:job_id = len(s:job_info_map) + 1
 
-        while has_key(s:job_info_map, l:job)
-            let l:job += 1
+        while has_key(s:job_info_map, l:job_id)
+            let l:job_id += 1
         endwhile
-        let l:job_id = l:job
     else
-        let l:job = ale#job#Start(l:command, l:job_options)
-        let l:job_id = ale#job#GetID(l:job)
+        let l:job_id = ale#job#Start(l:command, l:job_options)
     endif
 
     let l:status = 'failed'
@@ -449,10 +434,9 @@ function! s:RunJob(options) abort
     " Only proceed if the job is being run.
     if l:job_id
         " Add the job to the list of jobs, so we can track them.
-        call add(g:ale_buffer_info[l:buffer].job_list, l:job)
+        call add(g:ale_buffer_info[l:buffer].job_list, l:job_id)
 
         let l:status = 'started'
-        let l:job_id = ale#job#GetID(l:job)
         " Store the ID for the job in the map to read back again.
         let s:job_info_map[l:job_id] = {
         \   'linter': l:linter,
@@ -477,7 +461,7 @@ function! s:RunJob(options) abort
         \)
 
         " TODO, get the exit system of the shell call and pass it on here.
-        call l:job_options.exit_cb(l:job, 0)
+        call l:job_options.exit_cb(l:job_id, 0)
     endif
 endfunction
 
@@ -616,8 +600,8 @@ function! ale#engine#WaitForJobs(deadline) abort
     while l:should_wait_more
         let l:should_wait_more = 0
 
-        for l:job in l:job_list
-            if job_status(l:job) ==# 'run'
+        for l:job_id in l:job_list
+            if ale#job#IsRunning(l:job_id)
                 let l:now = ale#util#ClockMilliseconds()
 
                 if l:now - l:start_time > a:deadline
@@ -645,8 +629,8 @@ function! ale#engine#WaitForJobs(deadline) abort
 
     " Check again to see if any jobs are running.
     for l:info in values(g:ale_buffer_info)
-        for l:job in l:info.job_list
-            if job_status(l:job) ==# 'run'
+        for l:job_id in l:info.job_list
+            if ale#job#IsRunning(l:job_id)
                 let l:has_new_jobs = 1
                 break
             endif
