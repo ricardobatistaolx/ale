@@ -8,7 +8,20 @@ EXIT=0
 docker images -q w0rp/ale | grep "^$CURRENT_IMAGE_ID" > /dev/null \
     || docker pull "$IMAGE"
 
-for vim in $(docker run --rm "$IMAGE" ls /vim-build/bin | grep '^vim\|^neovim' ); do
+for vim in $(docker run --rm "$IMAGE" ls /vim-build/bin | grep '^neovim' ); do
+    echo
+    echo
+    echo '========================================'
+    echo "Running tests for $vim"
+    echo '========================================'
+    echo
+
+    docker run -e VADER_OUTPUT_FILE=/dev/stderr -it "${DOCKER_FLAGS[@]}" "$vim" -u /testplugin/test/vimrc --headless '+Vader! /testplugin/test/*.vader' || EXIT=$?
+done
+
+exit 1
+
+for vim in $(docker run --rm "$IMAGE" ls /vim-build/bin | grep '^vim' ); do
     echo
     echo
     echo '========================================'
