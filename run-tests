@@ -2,8 +2,17 @@
 
 CURRENT_IMAGE_ID=d5a1b5915b09
 IMAGE=w0rp/ale
-DOCKER_FLAGS=(--rm -v "$PWD:/testplugin" -v "$PWD/test:/home" "$IMAGE")
+DOCKER_FLAGS=(--rm -v "$PWD:/testplugin" -v "$PWD/test:/home" -w /testplugin "$IMAGE")
 EXIT=0
+
+tests='test/*.vader test/*/*.vader test/*/*/*.vader test/*/*/*.vader'
+
+# Allow tests to be passed as arguments.
+if [ $# -ne 0 ]; then
+    # This doesn't perfectly handle work splitting, but none of our files
+    # have spaces in the names.
+    tests="$*"
+fi
 
 docker images -q w0rp/ale | grep "^$CURRENT_IMAGE_ID" > /dev/null \
     || docker pull "$IMAGE"
@@ -17,11 +26,9 @@ for vim in $(docker run --rm "$IMAGE" ls /vim-build/bin | grep '^neovim' ); do
     echo
 
     docker run -it -e VADER_OUTPUT_FILE=/dev/stderr "${DOCKER_FLAGS[@]}" \
-        "/vim-build/bin/$vim" -u /testplugin/test/vimrc \
-        --headless '+Vader! /testplugin/test/*.vader' || EXIT=$?
+        "/vim-build/bin/$vim" -u test/vimrc \
+        --headless "+Vader! $tests" || EXIT=$?
 done
-
-exit 1
 
 for vim in $(docker run --rm "$IMAGE" ls /vim-build/bin | grep '^vim' ); do
     echo
@@ -31,7 +38,9 @@ for vim in $(docker run --rm "$IMAGE" ls /vim-build/bin | grep '^vim' ); do
     echo '========================================'
     echo
 
-    docker run -a stderr "${DOCKER_FLAGS[@]}" "$vim" '+Vader! test/*.vader' || EXIT=$?
+    docker run -a stderr "${DOCKER_FLAGS[@]}" \
+        "/vim-build/bin/$vim" -u test/vimrc \
+        "+Vader! $tests" || EXIT=$?
 done
 
 echo
@@ -42,7 +51,7 @@ echo 'Vint warnings/errors follow:'
 echo
 
 set -o pipefail
-docker run -a stdout "${DOCKER_FLAGS[@]}" vint -s /testplugin | sed s:^/testplugin/:: || EXIT=$?
+docker run -a stdout "${DOCKER_FLAGS[@]}" vint -s . || EXIT=$?
 set +o pipefail
 
 echo
@@ -53,7 +62,7 @@ echo 'Custom warnings/errors follow:'
 echo
 
 set -o pipefail
-docker run -a stdout "${DOCKER_FLAGS[@]}" /testplugin/custom-checks /testplugin | sed s:^/testplugin/:: || EXIT=$?
+docker run -a stdout "${DOCKER_FLAGS[@]}" ./custom-checks . EXIT=$?
 set +o pipefail
 echo
 
