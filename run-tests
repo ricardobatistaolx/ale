@@ -17,7 +17,7 @@ for vim in $(docker run --rm "$IMAGE" ls /vim-build/bin | grep '^neovim' ); do
     echo
 
     docker run -it -e VADER_OUTPUT_FILE=/dev/stderr "${DOCKER_FLAGS[@]}" \
-        /vim-build/bin/neovim-v0.1.7 -u /testplugin/test/vimrc \
+        "/vim-build/bin/$vim" -u /testplugin/test/vimrc \
         --headless '+Vader! /testplugin/test/*.vader' || EXIT=$?
 done
 
