@@ -124,13 +124,24 @@ function! ale#Var(buffer, variable_name) abort
     return getbufvar(str2nr(a:buffer), l:full_name, g:[l:full_name])
 endfunction
 
+function! s:EscapePercents(str) abort
+    return substitute(a:str, '%', '%%', 'g')
+endfunction
+
 " Escape a string suitably for each platform.
 " shellescape() does not work on Windows.
 function! ale#Escape(str) abort
     if fnamemodify(&shell, ':t') ==? 'cmd.exe'
-        " FIXME: Fix shell escaping for Windows.
-        return fnameescape(a:str)
-    else
-        return shellescape(a:str)
+        if a:str =~# '\v^[a-zA-Z0-9-_\\/:%]+$'
+            return s:EscapePercents(a:str)
+        endif
+
+        if a:str =~# '\'
+            return '"' . s:EscapePercents(a:str) . '"'
+        endif
+
+        return s:EscapePercents(substitute(a:str, '\v([&|<> ^])', '^\1', 'g'))
     endif
+
+    return shellescape(a:str)
 endfunction
