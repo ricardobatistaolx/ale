@@ -2,13 +2,19 @@
 " Description: This file adds support for checking PHP with phpstan
 
 function! ale_linters#php#php#Handle(buffer, lines) abort
-    " Matches patterns like the following:
-    "
-    " Parse error:  syntax error, unexpected ';', expecting ']' in - on line 15
-    let l:pattern = '(\d+)(.+)'
+    let l:pattern = '^\s\+\(\d\+\)\(.\+\)'
     let l:output = []
 
+    for i in a:lines
+        echom i
+    endfor
+
     for l:match in ale#util#GetMatches(a:lines, l:pattern)
+        for i in l:match
+            echom i
+        endfor
+
+
         let l:obj = {
         \   'lnum': l:match[1] + 0,
         \   'col': 0,
@@ -23,9 +29,9 @@ function! ale_linters#php#php#Handle(buffer, lines) abort
 endfunction
 
 call ale#linter#Define('php', {
-\   'name': 'php',
+\   'name': 'phpstan',
 \   'executable': 'phpstan',
 \   'output_stream': 'stdout',
-\   'command': 'phpstan analyse -l4',
+\   'command': 'phpstan analyse -l 4 %s',
 \   'callback': 'ale_linters#php#php#Handle',
 \})
