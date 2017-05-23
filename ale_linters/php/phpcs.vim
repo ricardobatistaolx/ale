@@ -9,7 +9,7 @@ function! ale_linters#php#phpcs#GetCommand(buffer) abort
     \   ? '--standard=' . l:standard
     \   : ''
 
-    return 'phpcs -s --report=emacs --stdin-path=%s ' . l:standard_option
+    return 'phpcs --standard=PSR1,PSR2 -s --report=emacs --stdin-path=%s ' . l:standard_option
 endfunction
 
 function! ale_linters#php#phpcs#Handle(buffer, lines) abort
