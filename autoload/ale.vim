@@ -6,6 +6,13 @@ let s:lint_timer = -1
 let s:queued_buffer_number = -1
 let s:should_lint_file_for_buffer = {}
 
+" Return 1 if a file is too large for ALE to handle.
+function! ale#FileTooLarge() abort
+    let l:max = ale#Var(bufnr(''), 'maximum_file_size')
+
+    return l:max > 0 ? (line2byte(line('$') + 1) > l:max) : 0
+endfunction
+
 " A function for checking various conditions whereby ALE just shouldn't
 " attempt to do anything, say if particular buffer types are open in Vim.
 function! ale#ShouldDoNothing() abort
@@ -14,6 +21,8 @@ function! ale#ShouldDoNothing() abort
     return index(g:ale_filetype_blacklist, &filetype) >= 0
     \   || (exists('*getcmdwintype') && !empty(getcmdwintype()))
     \   || ale#util#InSandbox()
+    \   || !ale#Var(bufnr(''), 'enabled')
+    \   || ale#FileTooLarge()
 endfunction
 
 " (delay, [linting_flag])
@@ -95,6 +104,8 @@ function! ale#Lint(...) abort
         call filter(l:linters, '!v:val.lint_file')
     endif
 
+    call ale#engine#StopCurrentJobs(l:buffer, l:should_lint_file)
+
     for l:linter in l:linters
         call ale#engine#Invoke(l:buffer, l:linter)
     endfor
@@ -119,9 +130,18 @@ endfunction
 "
 " Every variable name will be prefixed with 'ale_'.
 function! ale#Var(buffer, variable_name) abort
+    let l:nr = str2nr(a:buffer)
     let l:full_name = 'ale_' . a:variable_name
 
-    return getbufvar(str2nr(a:buffer), l:full_name, g:[l:full_name])
+    if bufexists(l:nr)
+        let l:vars = getbufvar(l:nr, '')
+    elseif has_key(g:, 'ale_fix_buffer_data')
+        let l:vars = get(g:ale_fix_buffer_data, l:nr, {'vars': {}}).vars
+    else
+        let l:vars = {}
+    endif
+
+    return get(l:vars, l:full_name, g:[l:full_name])
 endfunction
 
 " Initialize a variable with a default value, if it isn't already set.
@@ -135,14 +155,26 @@ function! ale#Set(variable_name, default) abort
     return l:value
 endfunction
 
+function! s:EscapePercents(str) abort
+    return substitute(a:str, '%', '%%', 'g')
+endfunction
+
 " Escape a string suitably for each platform.
 " shellescape does not work on Windows.
 function! ale#Escape(str) abort
     if fnamemodify(&shell, ':t') ==? 'cmd.exe'
-        " FIXME: Fix shell escaping for Windows.
-        return fnameescape(a:str)
-    else
-        " An extra space is used here to disable the custom-checks.
-        return shellescape (a:str)
+        if a:str =~# '\v^[a-zA-Z0-9-_\\/:%]+$'
+            return s:EscapePercents(a:str)
+        endif
+
+        if a:str =~# ' '
+            return '"'
+            \   .  substitute(s:EscapePercents(a:str), '"', '""', 'g')
+            \   . '"'
+        endif
+
+        return s:EscapePercents(substitute(a:str, '\v([&|<>^])', '^\1', 'g'))
     endif
+
+    return shellescape (a:str)
 endfunction

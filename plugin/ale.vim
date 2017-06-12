@@ -89,6 +89,8 @@ let g:ale_lint_on_save = get(g:, 'ale_lint_on_save', 1)
 " This flag can be set to 1 to enable linting when the filetype is changed.
 let g:ale_lint_on_filetype_changed = get(g:, 'ale_lint_on_filetype_changed', 1)
 
+call ale#Set('fix_on_save', 0)
+
 " This flag may be set to 0 to disable ale. After ale is loaded, :ALEToggle
 " should be used instead.
 let g:ale_enabled = get(g:, 'ale_enabled', 1)
@@ -103,6 +105,9 @@ let g:ale_open_list = get(g:, 'ale_open_list', 0)
 
 " This flag dictates if ale keeps open loclist even if there is no error in loclist
 let g:ale_keep_list_window_open = get(g:, 'ale_keep_list_window_open', 0)
+
+" The window size to set for the quickfix and loclist windows
+call ale#Set('list_window_size', 10)
 
 " This flag can be set to 0 to disable setting signs.
 " This is enabled by default only if the 'signs' feature exists.
@@ -142,11 +147,11 @@ let g:ale_echo_msg_warning_str = get(g:, 'ale_echo_msg_warning_str', 'Warning')
 " This flag can be set to 0 to disable echoing when the cursor moves.
 let g:ale_echo_cursor = get(g:, 'ale_echo_cursor', 1)
 
-" String format for statusline
-" Its a list where:
-" * The 1st element is for errors
-" * The 2nd element is for warnings
-" * The 3rd element is when there are no errors
+" This flag can be set to 0 to disable balloon support.
+call ale#Set('set_balloons', has('balloon_eval'))
+
+" A deprecated setting for ale#statusline#Status()
+" See :help ale#statusline#Count() for getting status reports.
 let g:ale_statusline_format = get(g:, 'ale_statusline_format',
 \   ['%d error(s)', '%d warning(s)', 'OK']
 \)
@@ -164,9 +169,25 @@ let g:ale_history_enabled = get(g:, 'ale_history_enabled', 1)
 " A flag for storing the full output of commands in the history.
 let g:ale_history_log_output = get(g:, 'ale_history_log_output', 0)
 
+" A dictionary mapping regular expression patterns to arbitrary buffer
+" variables to be set. Useful for configuration ALE based on filename
+" patterns.
+call ale#Set('pattern_options', {})
+call ale#Set('pattern_options_enabled', !empty(g:ale_pattern_options))
+
+" A maximum file size for checking for errors.
+call ale#Set('maximum_file_size', 0)
+
 function! ALEInitAuGroups() abort
     " This value used to be a Boolean as a Number, and is now a String.
     let l:text_changed = '' . g:ale_lint_on_text_changed
+
+    augroup ALEPatternOptionsGroup
+        autocmd!
+        if g:ale_enabled && g:ale_pattern_options_enabled
+            autocmd BufEnter,BufRead * call ale#pattern_options#SetOptions()
+        endif
+    augroup END
 
     augroup ALERunOnTextChangedGroup
         autocmd!
@@ -184,7 +205,7 @@ function! ALEInitAuGroups() abort
     augroup ALERunOnEnterGroup
         autocmd!
         if g:ale_enabled && g:ale_lint_on_enter
-            autocmd BufEnter,BufRead * call ale#Queue(300, 'lint_file')
+            autocmd BufWinEnter,BufRead * call ale#Queue(300, 'lint_file')
         endif
     augroup END
 
@@ -205,15 +226,15 @@ function! ALEInitAuGroups() abort
 
     augroup ALERunOnSaveGroup
         autocmd!
-        if g:ale_enabled && g:ale_lint_on_save
-            autocmd BufWrite * call ale#Queue(0, 'lint_file')
+        if (g:ale_enabled && g:ale_lint_on_save) || g:ale_fix_on_save
+            autocmd BufWrite * call ale#events#SaveEvent()
         endif
     augroup END
 
     augroup ALERunOnInsertLeave
         autocmd!
         if g:ale_enabled && g:ale_lint_on_insert_leave
-            autocmd InsertLeave * call ale#Queue(0, 'lint_file')
+            autocmd InsertLeave * call ale#Queue(0)
         endif
     augroup END
 
@@ -229,9 +250,13 @@ function! ALEInitAuGroups() abort
     augroup END
 
     if !g:ale_enabled
+        if !g:ale_fix_on_save
+            augroup! ALERunOnSaveGroup
+        endif
+
+        augroup! ALEPatternOptionsGroup
         augroup! ALERunOnTextChangedGroup
         augroup! ALERunOnEnterGroup
-        augroup! ALERunOnSaveGroup
         augroup! ALERunOnInsertLeave
         augroup! ALECursorGroup
     endif
@@ -241,8 +266,17 @@ function! s:ALEToggle() abort
     let g:ale_enabled = !get(g:, 'ale_enabled')
 
     if g:ale_enabled
+        " Set pattern options again, if enabled.
+        if g:ale_pattern_options_enabled
+            call ale#pattern_options#SetOptions()
+        endif
+
         " Lint immediately, including running linters against the file.
         call ale#Queue(0, 'lint_file')
+
+        if g:ale_set_balloons
+            call ale#balloon#Enable()
+        endif
     else
         " Make sure the buffer number is a number, not a string,
         " otherwise things can go wrong.
@@ -257,6 +291,10 @@ function! s:ALEToggle() abort
         if g:ale_set_highlights
             call ale#highlight#UpdateHighlights()
         endif
+
+        if g:ale_set_balloons
+            call ale#balloon#Disable()
+        endif
     endif
 
     call ALEInitAuGroups()
@@ -264,11 +302,17 @@ endfunction
 
 call ALEInitAuGroups()
 
+if g:ale_set_balloons
+    call ale#balloon#Enable()
+endif
+
 " Define commands for moving through warnings and errors.
 command! -bar ALEPrevious :call ale#loclist_jumping#Jump('before', 0)
 command! -bar ALEPreviousWrap :call ale#loclist_jumping#Jump('before', 1)
 command! -bar ALENext :call ale#loclist_jumping#Jump('after', 0)
 command! -bar ALENextWrap :call ale#loclist_jumping#Jump('after', 1)
+command! -bar ALEFirst :call ale#loclist_jumping#JumpToIndex(0)
+command! -bar ALELast :call ale#loclist_jumping#JumpToIndex(-1)
 
 " A command for showing error details.
 command! -bar ALEDetail :call ale#cursor#ShowCursorDetail()
@@ -296,6 +340,8 @@ nnoremap <silent> <Plug>(ale_previous) :ALEPrevious<Return>
 nnoremap <silent> <Plug>(ale_previous_wrap) :ALEPreviousWrap<Return>
 nnoremap <silent> <Plug>(ale_next) :ALENext<Return>
 nnoremap <silent> <Plug>(ale_next_wrap) :ALENextWrap<Return>
+nnoremap <silent> <Plug>(ale_first) :ALEFirst<Return>
+nnoremap <silent> <Plug>(ale_last) :ALELast<Return>
 nnoremap <silent> <Plug>(ale_toggle) :ALEToggle<Return>
 nnoremap <silent> <Plug>(ale_lint) :ALELint<Return>
 nnoremap <silent> <Plug>(ale_detail) :ALEDetail<Return>

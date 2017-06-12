@@ -10,7 +10,7 @@ CONTENTS                                                         *ale-contents*
   2. Supported Languages & Tools..........|ale-support|
   3. Global Options.......................|ale-options|
   4. Fixing Problems......................|ale-fix|
-  5. Linter Options and Recommendations...|ale-linter-options|
+  5. Integration Documentation............|ale-integrations|
     asm...................................|ale-asm-options|
       gcc.................................|ale-asm-gcc|
     c.....................................|ale-c-options|
@@ -47,6 +47,8 @@ CONTENTS                                                         *ale-contents*
       eslint..............................|ale-javascript-eslint|
       flow................................|ale-javascript-flow|
       jshint..............................|ale-javascript-jshint|
+      prettier............................|ale-javascript-prettier|
+      prettier-eslint.....................|ale-javascript-prettier-eslint|
       standard............................|ale-javascript-standard|
       xo..................................|ale-javascript-xo|
     kotlin................................|ale-kotlin-options|
@@ -61,6 +63,7 @@ CONTENTS                                                         *ale-contents*
       merlin..............................|ale-ocaml-merlin|
     perl..................................|ale-perl-options|
       perl................................|ale-perl-perl|
+      perlcritic..........................|ale-perl-perlcritic|
     php...................................|ale-php-options|
       phpcs...............................|ale-php-phpcs|
       phpmd...............................|ale-php-phpmd|
@@ -152,7 +155,7 @@ The following languages and tools are supported.
 * Haskell: 'ghc', 'ghc-mod', 'hlint', 'hdevtools'
 * HTML: 'HTMLHint', 'proselint', 'tidy'
 * Java: 'javac'
-* JavaScript: 'eslint', 'jscs', 'jshint', 'flow', 'xo'
+* JavaScript: 'eslint', 'jscs', 'jshint', 'flow', 'prettier', 'prettier-eslint', 'xo'
 * JSON: 'jsonlint'
 * Kotlin: 'kotlinc'
 * LaTeX (tex): 'chktex', 'lacheck', 'proselint'
@@ -277,6 +280,7 @@ g:ale_emit_conflict_warnings                     *g:ale_emit_conflict_warnings*
 
 
 g:ale_enabled                                                   *g:ale_enabled*
+                                                                *b:ale_enabled*
 
   Type: |Number|
   Default: `1`
@@ -284,6 +288,16 @@ g:ale_enabled                                                   *g:ale_enabled*
   When set to `0`, this option will completely disable ALE, such that no
   error checking will be performed, etc. ALE can be toggled on and off with
   the |ALEToggle| command, which changes this option.
+
+  ALE can be disabled in each buffer by setting `let b:ale_enabled = 0`
+  Disabling ALE based on filename patterns can be accomplished by setting
+  a regular expression for |g:ale_pattern_options|. For example: >
+
+  " Disable linting for all minified JS files.
+  let g:ale_pattern_options = {'\.min.js$': {'ale_enabled': 0}}
+<
+
+  See |g:ale_pattern_options| for more information on that option.
 
 
 g:ale_fixers                                                     *g:ale_fixers*
@@ -296,6 +310,18 @@ g:ale_fixers                                                     *g:ale_fixers*
   See |ale-fix| for more information.
 
   This variable can be overriden with variables in each buffer.
+
+
+g:ale_fix_on_save                                           *g:ale_fix_on_save*
+
+  Type: |Number|
+  Default: `0`
+
+  When set to 1, ALE will fix files when they are saved.
+
+  If |g:ale_lint_on_save| is set to 1, files will be checked with linters
+  after files are fixed, only when the buffer is open, or re-opened. Changes
+  to the file will be saved to the file on disk.
 
 
 g:ale_history_enabled                                   *g:ale_history_enabled*
@@ -340,6 +366,19 @@ g:ale_keep_list_window_open                       *g:ale_keep_list_window_open*
   See: |g:ale_open_list|
 
 
+g:ale_list_window_size                                 *g:ale_list_window_size*
+                                                       *b:ale_list_window_size*
+  Type: |Number|
+  Default: `10`
+
+  This number configures the number of lines to set for the height of windows
+  opened automatically for ALE problems. The default of `10` matches the Vim
+  default height.
+
+  See |g:ale_open_list| for information on automatically opening windows
+  for quickfix or the loclist.
+
+
 g:ale_lint_delay                                             *g:ale_lint_delay*
 
   Type: |Number|
@@ -355,9 +394,9 @@ g:ale_lint_on_enter                                       *g:ale_lint_on_enter*
   Type: |Number|
   Default: `1`
 
-  When this option is set to `1`, the |BufEnter| and |BufRead| events will be
-  used to apply linters when buffers are first opened. If this is not desired,
-  this variable can be set to `0` in your vimrc file to disable this
+  When this option is set to `1`, the |BufWinEnter| and |BufRead| events will
+  be used to apply linters when buffers are first opened. If this is not
+  desired, this variable can be set to `0` in your vimrc file to disable this
   behaviour.
 
 
@@ -406,7 +445,7 @@ g:ale_lint_on_insert_leave                         *g:ale_lint_on_insert_leave*
   Default: `0`
 
   This option will make ALE run the linters whenever leaving insert mode when
-  it it set to `1` in your vimrc file.
+  it is set to `1` in your vimrc file.
 
 
 g:ale_linter_aliases                                     *g:ale_linter_aliases*
@@ -503,6 +542,15 @@ g:ale_max_buffer_history_size                   *g:ale_max_buffer_history_size*
   History can be disabled completely with |g:ale_history_enabled|.
 
 
+g:ale_maximum_file_size                               *g:ale_maximum_file_size*
+                                                      *b:ale_maximum_file_size*
+  Type: |Number|
+  Default: `0`
+
+  A maximum file size in bytes for ALE to check. If set to any positive
+  number, ALE will skip checking files larger than the given size.
+
+
 g:ale_open_list                                               *g:ale_open_list*
 
   Type: |Number|
@@ -515,6 +563,53 @@ g:ale_open_list                                               *g:ale_open_list*
   The window will be kept open until all warnings or errors are cleared,
   including those not set by ALE, unless |g:ale_keep_list_window_open| is set
   to `1`, in which case the window will be kept open until closed manually.
+
+  The window size can be configured with |g:ale_list_window_size|.
+
+
+g:ale_pattern_options                                   *g:ale_pattern_options*
+
+  Type: |Dictionary|
+  Default: `{}`
+
+  This option maps regular expression patterns to |Dictionary| values for
+  buffer variables. This option can be set to automatically configure
+  different settings for different files. For example: >
+
+  let g:ale_pattern_options = {
+  \   '\.foo\.js$': {
+  \       'ale_linters: {'javascript': ['eslint']},
+  \   },
+  \}
+<
+  The above example will match any filename ending in `.foo.js`, and use
+  only `eslint` for checking those files by setting `b:ale_linters`.
+
+  Filenames are matched with |match()|, and patterns depend on the |magic|
+  setting, unless prefixed with the special escape sequences like `'\v'`, etc.
+
+  The patterns can match any part of a filename. The absolute path of the
+  filename will be used for matching, taken from `expand('%:p')`.
+
+
+g:ale_pattern_options_enabled                   *g:ale_pattern_options_enabled*
+
+  Type: |Number|
+  Default: `!empty(g:ale_pattern_options)`
+
+  This option can be used for turning the behaviour of setting
+  |g:ale_pattern_options| on or off. By default, setting a single key
+  for |g:ale_pattern_options| will turn this option on.
+
+
+g:ale_set_balloons                                         *g:ale_set_balloons*
+
+  Type: |Number|
+  Default: `has('balloon_eval')`
+
+  When this option is set to `1`, balloon messages will be displayed for
+  problems. Problems nearest to the cursor on the line the cursor is over will
+  be displayed.
 
 
 g:ale_set_highlights                                     *g:ale_set_highlights*
@@ -646,17 +741,6 @@ g:ale_sign_warning                                         *g:ale_sign_warning*
   The sign for warnings in the sign gutter.
 
 
-g:ale_statusline_format                               *g:ale_statusline_format*
-
-  Type: |List|
-  Default: `['%d error(s)', '%d warning(s)', 'OK']`
-
-  This variable defines the format of |`ale#statusline#status()`| output.
-  - The 1st element is for errors
-  - The 2nd element is for warnings
-  - The 3rd element is for when no errors are detected
-
-
 g:ale_warn_about_trailing_whitespace     *g:ale_warn_about_trailing_whitespace*
 b:ale_warn_about_trailing_whitespace     *b:ale_warn_about_trailing_whitespace*
 
@@ -687,10 +771,16 @@ The values for `g:ale_fixers` can be a list of |String|, |Funcref|, or
 |lambda| values. String values must either name a function, or a short name
 for a function set in the ALE fixer registry.
 
-Each function for fixing errors must accept two arguments `(buffer, lines)`,
-representing the buffer being fixed and the lines to fix. The functions must
-return either `0`, for changing nothing, a |List| for new lines to set, or a
-|Dictionary| for describing a command to be run in the background.
+Each function for fixing errors must accept either one argument `(buffer)` or
+two arguments `(buffer, lines)`, representing the buffer being fixed and the
+lines to fix. The functions must return either `0`, for changing nothing, a
+|List| for new lines to set, or a |Dictionary| for describing a command to be
+run in the background.
+
+Functions receiving a variable number of arguments will not receive the second
+argument `lines`. Functions should name two arguments if the `lines` argument
+is desired. This is required to avoid unnecessary copying of the lines of
+the buffers being checked.
 
 When a |Dictionary| is returned for an |ALEFix| callback, the following keys
 are supported for running the commands.
@@ -711,11 +801,13 @@ are supported for running the commands.
 Synchronous functions and asynchronous jobs will be run in a sequence for
 fixing files, and can be combined. For example:
 >
-  let g:ale_fixers.javascript = [
-  \ 'DoSomething',
-  \ 'eslint',
-  \ {buffer, lines -> filter(lines, 'v:val !=~ ''^\s*//''')},
-  \]
+  let g:ale_fixers = {
+  \   'javascript': [
+  \       'DoSomething',
+  \       'eslint',
+  \       {buffer, lines -> filter(lines, 'v:val !=~ ''^\s*//''')},
+  \   ],
+  \}
 
   ALEFix
 <
@@ -724,16 +816,27 @@ upon some lines immediately, then run `eslint` from the ALE registry, and
 then call a lambda function which will remove every single line comment
 from the file.
 
+For convenience, a plug mapping is defined for |ALEFix|, so you can set up a
+keybind easily for fixing files. >
+
+  " Bind F8 to fixing problems with ALE
+  nmap <F8> <Plug>(ale_fix)
+<
+Files can be fixed automatically with the following options, which are all off
+by default.
+
+|g:ale_fix_on_save| - Fix files when they are saved.
+
 
 ===============================================================================
-5. Linter Options and Recommendations                      *ale-linter-options*
+5. Integration Documentation                                 *ale-integrations*
 
-Linter options are documented in individual help files. See the table of
-contents at |ale-contents|.
+Linter and fixer options are documented in individual help files. See the
+table of contents at |ale-contents|.
 
-Every linter variable can be set globally, or individually for each buffer.
-For example, `b:ale_python_flake8_executable` will override any values
-set for `g:ale_python_flake8_executable`.
+Every option for programs can be set globally, or individually for each
+buffer.  For example, `b:ale_python_flake8_executable` will override any
+values set for `g:ale_python_flake8_executable`.
 
 
 ===============================================================================
@@ -742,6 +845,8 @@ set for `g:ale_python_flake8_executable`.
 ALEFix                                                                 *ALEFix*
 
   Fix problems with the current buffer. See |ale-fix| for more information.
+
+  A plug mapping `<Plug>(ale_fix)` is defined for this command.
 
 
 ALELint                                                               *ALELint*
@@ -759,6 +864,8 @@ ALEPrevious                                                       *ALEPrevious*
 ALEPreviousWrap                                               *ALEPreviousWrap*
 ALENext                                                               *ALENext*
 ALENextWrap                                                       *ALENextWrap*
+ALEFirst                                                             *ALEFirst*
+ALELast                                                               *ALELast*
                                                       *ale-navigation-commands*
 
   Move between warnings or errors in a buffer. ALE will only navigate between
@@ -769,11 +876,16 @@ ALENextWrap                                                       *ALENextWrap*
   `ALEPreviousWrap` and `ALENextWrap` will wrap around the file to find
   the last or first warning or error in the file, respectively.
 
+  `ALEFirst` goes to the first error or warning in the buffer, while `ALELast`
+  goes to the last one.
+
   The following |<Plug>| mappings are defined for the commands: >
   <Plug>(ale_previous) - ALEPrevious
   <Plug>(ale_previous_wrap) - ALEPreviousWrap
   <Plug>(ale_next) - ALENext
   <Plug>(ale_next_wrap) - ALENextWrap
+  <Plug>(ale_first) - ALEFirst
+  <Plug>(ale_last) - ALELast
 <
   For example, these commands could be bound to the keys Ctrl + j
   and Ctrl + k: >
@@ -1032,6 +1144,13 @@ ale#linter#Define(filetype, linter)                       *ale#linter#Define()*
                          be set automatically to `0`. The two options cannot
                          be used together.
 
+  `aliases`                A |List| of aliases for the linter name.
+
+                         This option can be set with alternative names for
+                         for selecting the linter with |g:ale_linters|. This
+                         setting can make it easier to guess the linter name
+                         by offering a few alternatives.
+
   Only one of `command`, `command_callback`, or `command_chain` should be
   specified. `command_callback` is generally recommended when a command string
   needs to be generated dynamically, or any global options are used.
@@ -1102,12 +1221,18 @@ ale#linter#Get(filetype)                                     *ale#linter#Get()*
   components.
 
 
-ale#statusline#Status()                               *ale#statusline#Status()*
+ale#statusline#Count(buffer)                           *ale#statusline#Count()*
 
-  Return a formatted string that can be added to the statusline.
-  The output's format is defined in |`g:ale_statusline_format`|.
-  To enable it, the following should be present in your |statusline| settings: >
-  %{ale#statusline#Status()}
+  Given the number of a buffer which may have problems, return a |Dictionary|
+  containing information about the number of problems detected by ALE. The
+  following keys are supported:
+
+  `error`         -> The number of problems with type `E` and `sub_type != 'style'`
+  `warning`       -> The number of problems with type `W` and `sub_type != 'style'`
+  `info`          -> The number of problems with type `I`
+  `style_error`   -> The number of problems with type `E` and `sub_type == 'style'`
+  `style_warning` -> The number of problems with type `W` and `sub_type == 'style'`
+  `total`         -> The total number of problems.
 
 
 ALELint                                                       *ALELint-autocmd*

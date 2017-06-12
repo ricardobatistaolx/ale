@@ -58,6 +58,7 @@ name. That seems to be the fairest way to arrange this table.
 | ASM | [gcc](https://gcc.gnu.org) |
 | Ansible | [ansible-lint](https://github.com/willthames/ansible-lint) |
 | AsciiDoc | [proselint](http://proselint.com/)|
+| Awk | [gawk](https://www.gnu.org/software/gawk/)|
 | Bash | [-n flag](https://www.gnu.org/software/bash/manual/bash.html#index-set), [shellcheck](https://www.shellcheck.net/) |
 | Bourne Shell | [-n flag](http://linux.die.net/man/1/sh), [shellcheck](https://www.shellcheck.net/) |
 | C | [cppcheck](http://cppcheck.sourceforge.net), [gcc](https://gcc.gnu.org/), [clang](http://clang.llvm.org/)|
@@ -82,9 +83,9 @@ name. That seems to be the fairest way to arrange this table.
 | Haskell | [ghc](https://www.haskell.org/ghc/), [ghc-mod](https://github.com/DanielG/ghc-mod), [hlint](https://hackage.haskell.org/package/hlint), [hdevtools](https://hackage.haskell.org/package/hdevtools) |
 | HTML | [HTMLHint](http://htmlhint.com/), [proselint](http://proselint.com/), [tidy](http://www.html-tidy.org/) |
 | Java | [checkstyle](http://checkstyle.sourceforge.net), [javac](http://www.oracle.com/technetwork/java/javase/downloads/index.html) |
-| JavaScript | [eslint](http://eslint.org/), [jscs](http://jscs.info/), [jshint](http://jshint.com/), [flow](https://flowtype.org/), [standard](http://standardjs.com/), [xo](https://github.com/sindresorhus/xo)
+| JavaScript | [eslint](http://eslint.org/), [jscs](http://jscs.info/), [jshint](http://jshint.com/), [flow](https://flowtype.org/), [standard](http://standardjs.com/), [prettier](https://github.com/prettier/prettier) (and `prettier-eslint`), [xo](https://github.com/sindresorhus/xo)
 | JSON | [jsonlint](http://zaa.ch/jsonlint/) |
-| Kotlin | [kotlinc](https://kotlinlang.org) see `:help ale-integration-kotlin` for configuration instructions
+| Kotlin | [kotlinc](https://kotlinlang.org), [ktlint](https://ktlint.github.io) see `:help ale-integration-kotlin` for configuration instructions
 | LaTeX | [chktex](http://www.nongnu.org/chktex/), [lacheck](https://www.ctan.org/pkg/lacheck), [proselint](http://proselint.com/) |
 | Lua | [luacheck](https://github.com/mpeterv/luacheck) |
 | Markdown | [mdl](https://github.com/mivok/markdownlint), [proselint](http://proselint.com/), [vale](https://github.com/ValeLint/vale) |
@@ -296,28 +297,36 @@ highlight clear ALEWarningSign
 
 ### 5.iv. How can I show errors or warnings in my statusline?
 
-You can use `ALEGetStatusLine()` to integrate ALE into vim statusline.
-To enable it, you should have in your `statusline` settings
+[vim-airline](https://github.com/vim-airline/vim-airline) integrates with
+ALE for displaying error information in the status bar. If you want to see
+the status for ALE in a nice format, it is recommended to use vim-airline
+with ALE.
+
+ALE offers the ability to show some information in statuslines with no extra
+plugins. ALE provides a function for getting a summary with the number of
+problems detected, and you can implement your own function for your statusline.
+
+Say you want to display all errors as one figure, and all non-errors as another
+figure. You can do the following:
 
 ```vim
-%{ALEGetStatusLine()}
+function! LinterStatus() abort
+    let l:counts = ale#statusline#Count(bufnr(''))
+
+    let l:all_errors = l:counts.error + l:counts.style_error
+    let l:all_non_errors = l:counts.total - l:all_errors
+
+    return l:counts.total == 0 ? 'OK' : printf(
+    \   '%dW %dE',
+    \   all_non_errors,
+    \   all_errors
+    \)
+endfunction
+
+set statusline=%{LinterStatus()}
 ```
 
-When errors are detected a string showing the number of errors will be shown.
-You can customize the output format using the global list `g:ale_statusline_format` where:
-
-- The 1st element is for errors
-- The 2nd element is for warnings
-- The 3rd element is for when no errors are detected
-
-e.g
-
-```vim
-let g:ale_statusline_format = ['⨉ %d', '⚠ %d', '⬥ ok']
-```
-
-![Statusline with issues](img/issues.png)
-![Statusline with no issues](img/no_issues.png)
+See `:help ale#statusline#Count()` for more information.
 
 <a name="faq-echo-format"></a>
 
@@ -430,7 +439,7 @@ If you configure ALE options correctly in your vimrc file, and install
 the right tools, you can check JSX files with stylelint and eslint.
 
 First, install eslint and install stylelint with
-[https://github.com/styled-components/stylelint-processor-styled-components](stylelint-processor-styled-components).
+[stylelint-processor-styled-components](https://github.com/styled-components/stylelint-processor-styled-components).
 
 Supposing you have installed both tools correctly, configure your .jsx files so
 `jsx` is included in the filetype. You can use an `autocmd` for this.
@@ -478,4 +487,4 @@ still be an advantage.
 
 If you are still concerned, you can turn the automatic linting off altogether,
 including the option `g:ale_lint_on_enter`, and you can run ALE manually with
-`:call ale#Lint()`.
+`:ALELint`.

@@ -33,59 +33,17 @@ function! ale#engine#InitBufferInfo(buffer) abort
     if !has_key(g:ale_buffer_info, a:buffer)
         " job_list will hold the list of jobs
         " loclist holds the loclist items after all jobs have completed.
-        " lint_file_loclist holds items from the last run including linters
-        "   which use the lint_file option.
-        " new_loclist holds loclist items while jobs are being run.
         " temporary_file_list holds temporary files to be cleaned up
         " temporary_directory_list holds temporary directories to be cleaned up
         " history holds a list of previously run commands for this buffer
         let g:ale_buffer_info[a:buffer] = {
         \   'job_list': [],
         \   'loclist': [],
-        \   'lint_file_loclist': [],
-        \   'new_loclist': [],
         \   'temporary_file_list': [],
         \   'temporary_directory_list': [],
         \   'history': [],
         \}
     endif
-endfunction
-
-function! ale#engine#ClearJob(job_id) abort
-    if get(g:, 'ale_run_synchronously') == 1
-        call remove(s:job_info_map, a:job_id)
-
-        return
-    endif
-
-    call ale#job#Stop(a:job_id)
-
-    if has_key(s:job_info_map, a:job_id)
-        call remove(s:job_info_map, a:job_id)
-    endif
-endfunction
-
-function! s:StopPreviousJobs(buffer, linter) abort
-    if !has_key(g:ale_buffer_info, a:buffer)
-        " Do nothing if we didn't run anything for the buffer.
-        return
-    endif
-
-    let l:new_job_list = []
-
-    for l:job_id in g:ale_buffer_info[a:buffer].job_list
-        if has_key(s:job_info_map, l:job_id)
-        \&& s:job_info_map[l:job_id].linter.name ==# a:linter.name
-            " Stop jobs which match the buffer and linter.
-            call ale#engine#ClearJob(l:job_id)
-        else
-            " Keep other jobs in the list.
-            call add(l:new_job_list, l:job_id)
-        endif
-    endfor
-
-    " Update the list, removing the previously run job.
-    let g:ale_buffer_info[a:buffer].job_list = l:new_job_list
 endfunction
 
 " Register a temporary file to be managed with the ALE engine for
@@ -160,9 +118,10 @@ function! s:HandleExit(job_id, exit_code) abort
         call ale#history#SetExitCode(l:buffer, a:job_id, a:exit_code)
     endif
 
-    " Call the same function for stopping jobs again to clean up the job
-    " which just closed.
-    call s:StopPreviousJobs(l:buffer, l:linter)
+    " Remove this job from the list.
+    call ale#job#Stop(a:job_id)
+    call remove(s:job_info_map, a:job_id)
+    call filter(g:ale_buffer_info[l:buffer].job_list, 'v:val !=# a:job_id')
 
     " Stop here if we land in the handle for a job completing if we're in
     " a sandbox.
@@ -190,53 +149,66 @@ function! s:HandleExit(job_id, exit_code) abort
     " to set default values for loclist items.
     let l:linter_loclist = ale#engine#FixLocList(l:buffer, l:linter, l:linter_loclist)
 
-    " Add the loclist items from the linter.
-    " loclist items for files which are checked go into a different list,
-    " and are kept between runs.
-    if l:linter.lint_file
-        call extend(g:ale_buffer_info[l:buffer].lint_file_loclist, l:linter_loclist)
-    else
-        call extend(g:ale_buffer_info[l:buffer].new_loclist, l:linter_loclist)
-    endif
-
-    if !empty(g:ale_buffer_info[l:buffer].job_list)
-        " Wait for all jobs to complete before doing anything else.
-        return
-    endif
-
-    " Automatically remove all managed temporary files and directories
-    " now that all jobs have completed.
-    call ale#engine#RemoveManagedFiles(l:buffer)
-
-    " Combine the lint_file List and the List for everything else.
-    let l:combined_list = g:ale_buffer_info[l:buffer].lint_file_loclist
-    \   + g:ale_buffer_info[l:buffer].new_loclist
+    " Remove previous items for this linter.
+    call filter(g:ale_buffer_info[l:buffer].loclist, 'v:val.linter_name !=# l:linter.name')
+    " Add the new items.
+    call extend(g:ale_buffer_info[l:buffer].loclist, l:linter_loclist)
 
     " Sort the loclist again.
     " We need a sorted list so we can run a binary search against it
     " for efficient lookup of the messages in the cursor handler.
-    call sort(l:combined_list, 'ale#util#LocItemCompare')
+    call sort(g:ale_buffer_info[l:buffer].loclist, 'ale#util#LocItemCompare')
 
-    " Now swap the old and new loclists, after we have collected everything
-    " and sorted the list again.
-    let g:ale_buffer_info[l:buffer].loclist = l:combined_list
-    let g:ale_buffer_info[l:buffer].new_loclist = []
+    let l:linting_is_done = empty(g:ale_buffer_info[l:buffer].job_list)
+
+    if l:linting_is_done
+        " Automatically remove all managed temporary files and directories
+        " now that all jobs have completed.
+        call ale#engine#RemoveManagedFiles(l:buffer)
+
+        " Figure out which linters are still enabled, and remove
+        " problems for linters which are no longer enabled.
+        let l:name_map = {}
+
+        for l:linter in ale#linter#Get(getbufvar(l:buffer, '&filetype'))
+            let l:name_map[l:linter.name] = 1
+        endfor
+
+        call filter(
+        \   g:ale_buffer_info[l:buffer].loclist,
+        \   'get(l:name_map, v:val.linter_name)',
+        \)
+    endif
 
     call ale#engine#SetResults(l:buffer, g:ale_buffer_info[l:buffer].loclist)
 
-    " Call user autocommands. This allows users to hook into ALE's lint cycle.
-    silent doautocmd User ALELint
+    if l:linting_is_done
+        " Call user autocommands. This allows users to hook into ALE's lint cycle.
+        silent doautocmd User ALELint
+    endif
 endfunction
 
 function! ale#engine#SetResults(buffer, loclist) abort
+    let l:info = get(g:ale_buffer_info, a:buffer, {})
+    let l:job_list = get(l:info, 'job_list', [])
+    let l:linting_is_done = empty(l:job_list)
+
     " Set signs first. This could potentially fix some line numbers.
     " The List could be sorted again here by SetSigns.
     if g:ale_set_signs
         call ale#sign#SetSigns(a:buffer, a:loclist)
+
+        if l:linting_is_done
+            call ale#sign#RemoveDummySignIfNeeded(a:buffer)
+        endif
     endif
 
     if g:ale_set_quickfix || g:ale_set_loclist
         call ale#list#SetLists(a:buffer, a:loclist)
+
+        if l:linting_is_done
+            call ale#list#CloseWindowIfNeeded(a:buffer)
+        endif
     endif
 
     if exists('*ale#statusline#Update')
@@ -291,9 +263,13 @@ function! ale#engine#FixLocList(buffer, linter, loclist) abort
             let l:item.detail = l:old_item.detail
         endif
 
-        " Pass on a col_length key if set, used for highlights.
+        " Pass on a end_col key if set, used for highlights.
         if has_key(l:old_item, 'end_col')
             let l:item.end_col = str2nr(l:old_item.end_col)
+        endif
+
+        if has_key(l:old_item, 'end_lnum')
+            let l:item.end_lnum = str2nr(l:old_item.end_lnum)
         endif
 
         if has_key(l:old_item, 'sub_type')
@@ -503,10 +479,28 @@ function! s:InvokeChain(buffer, linter, chain_index, input) abort
     endif
 endfunction
 
-function! ale#engine#Invoke(buffer, linter) abort
-    " Stop previous jobs for the same linter.
-    call s:StopPreviousJobs(a:buffer, a:linter)
+function! ale#engine#StopCurrentJobs(buffer, include_lint_file_jobs) abort
+    let l:info = get(g:ale_buffer_info, a:buffer, {})
+    let l:new_job_list = []
 
+    for l:job_id in get(l:info, 'job_list', [])
+        let l:job_info = get(s:job_info_map, l:job_id, {})
+
+        if !empty(l:job_info)
+            if a:include_lint_file_jobs || !l:job_info.linter.lint_file
+                call ale#job#Stop(l:job_id)
+                call remove(s:job_info_map, l:job_id)
+            else
+                call add(l:new_job_list, l:job_id)
+            endif
+        endif
+    endfor
+
+    " Update the List, so it includes only the jobs we still need.
+    let l:info.job_list = l:new_job_list
+endfunction
+
+function! ale#engine#Invoke(buffer, linter) abort
     let l:executable = has_key(a:linter, 'executable_callback')
     \   ? ale#util#GetFunction(a:linter.executable_callback)(a:buffer)
     \   : a:linter.executable

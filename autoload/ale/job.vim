@@ -42,25 +42,33 @@ function! ale#job#JoinNeovimOutput(job, last_line, data, callback) abort
 endfunction
 
 function! s:NeoVimCallback(job, data, event) abort
-    let l:job_info = s:job_map[a:job]
+    let l:info = s:job_map[a:job]
 
     if a:event ==# 'stdout'
-        let l:job_info.out_cb_line = ale#job#JoinNeovimOutput(
+        let l:info.out_cb_line = ale#job#JoinNeovimOutput(
         \   a:job,
-        \   l:job_info.out_cb_line,
+        \   l:info.out_cb_line,
         \   a:data,
-        \   ale#util#GetFunction(l:job_info.out_cb),
+        \   ale#util#GetFunction(l:info.out_cb),
         \)
     elseif a:event ==# 'stderr'
-        let l:job_info.err_cb_line = ale#job#JoinNeovimOutput(
+        let l:info.err_cb_line = ale#job#JoinNeovimOutput(
         \   a:job,
-        \   l:job_info.err_cb_line,
+        \   l:info.err_cb_line,
         \   a:data,
-        \   ale#util#GetFunction(l:job_info.err_cb),
+        \   ale#util#GetFunction(l:info.err_cb),
         \)
     else
+        if has_key(l:info, 'out_cb') && !empty(l:info.out_cb_line)
+            call ale#util#GetFunction(l:info.out_cb)(a:job, l:info.out_cb_line)
+        endif
+
+        if has_key(l:info, 'err_cb') && !empty(l:info.err_cb_line)
+            call ale#util#GetFunction(l:info.err_cb)(a:job, l:info.err_cb_line)
+        endif
+
         try
-            call ale#util#GetFunction(l:job_info.exit_cb)(a:job, a:data)
+            call ale#util#GetFunction(l:info.exit_cb)(a:job, a:data)
         finally
             " Automatically forget about the job after it's done.
             if has_key(s:job_map, a:job)
@@ -75,7 +83,7 @@ function! s:VimOutputCallback(channel, data) abort
     let l:job_id = ale#job#ParseVim8ProcessID(string(l:job))
 
     " Only call the callbacks for jobs which are valid.
-    if l:job_id > 0
+    if l:job_id > 0 && has_key(s:job_map, l:job_id)
         call ale#util#GetFunction(s:job_map[l:job_id].out_cb)(l:job_id, a:data)
     endif
 endfunction
@@ -85,7 +93,7 @@ function! s:VimErrorCallback(channel, data) abort
     let l:job_id = ale#job#ParseVim8ProcessID(string(l:job))
 
     " Only call the callbacks for jobs which are valid.
-    if l:job_id > 0
+    if l:job_id > 0 && has_key(s:job_map, l:job_id)
         call ale#util#GetFunction(s:job_map[l:job_id].err_cb)(l:job_id, a:data)
     endif
 endfunction
@@ -94,6 +102,10 @@ function! s:VimCloseCallback(channel) abort
     let l:job = ch_getjob(a:channel)
     let l:job_id = ale#job#ParseVim8ProcessID(string(l:job))
     let l:info = get(s:job_map, l:job_id, {})
+
+    if empty(l:info)
+        return
+    endif
 
     " job_status() can trigger the exit handler.
     " The channel can close before the job has exited.
@@ -114,6 +126,11 @@ endfunction
 function! s:VimExitCallback(job, exit_code) abort
     let l:job_id = ale#job#ParseVim8ProcessID(string(a:job))
     let l:info = get(s:job_map, l:job_id, {})
+
+    if empty(l:info)
+        return
+    endif
+
     let l:info.exit_code = a:exit_code
 
     " The program can exit before the data has finished being read.
@@ -251,12 +268,16 @@ endfunction
 " Given a Job ID, stop that job.
 " Invalid job IDs will be ignored.
 function! ale#job#Stop(job_id) abort
+    if !has_key(s:job_map, a:job_id)
+        return
+    endif
+
     if has('nvim')
         " FIXME: NeoVim kills jobs on a timer, but will not kill any processes
         " which are child processes on Unix. Some work needs to be done to
         " kill child processes to stop long-running processes like pylint.
         call jobstop(a:job_id)
-    elseif has_key(s:job_map, a:job_id)
+    else
         let l:job = s:job_map[a:job_id].job
 
         " We must close the channel for reading the buffer if it is open

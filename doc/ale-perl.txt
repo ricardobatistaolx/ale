@@ -16,10 +16,22 @@ g:ale_perl_perl_executable                         *g:ale_perl_perl_executable*
 g:ale_perl_perl_options                               *g:ale_perl_perl_options*
                                                       *b:ale_perl_perl_options*
   Type: |String|
-  Default: `'-X -c -Mwarnings -Ilib'`
+  Default: `'-c -Mwarnings -Ilib'`
 
   This variable can be changed to alter the command-line arguments to the perl
   invocation.
+
+
+-------------------------------------------------------------------------------
+perlcritic                                                *ale-perl-perlcritic*
+
+g:ale_perl_perlcritic_showrules               *g:ale_perl_perlcritic_showrules*
+
+  Type: |Number|
+  Default: 0
+
+  Controls whether perlcritic rule names are shown after the error message.
+  Defaults to off to reduce length of message.
 
 
 -------------------------------------------------------------------------------

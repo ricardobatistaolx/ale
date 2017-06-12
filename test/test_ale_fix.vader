@@ -1,7 +1,17 @@
 Before:
-  Save g:ale_fixers, &shell, g:ale_enabled
+  Save g:ale_fixers
+  Save &shell
+  Save g:ale_enabled
+  Save g:ale_fix_on_save
+  Save g:ale_lint_on_save
+  Save g:ale_echo_cursor
+
+  silent! cd /testplugin/test
+
   let g:ale_enabled = 0
+  let g:ale_echo_cursor = 0
   let g:ale_run_synchronously = 1
+  let g:ale_fix_buffer_data = {}
   let g:ale_fixers = {
   \ 'testft': [],
   \}
@@ -25,12 +35,33 @@ Before:
     return {'command': 'cat - <(echo d)'}
   endfunction
 
+  function CatLineOneArg(buffer) abort
+    return {'command': 'cat - <(echo d)'}
+  endfunction
+
   function ReplaceWithTempFile(buffer, lines) abort
     return {'command': 'echo x > %t', 'read_temporary_file': 1}
   endfunction
 
   function RemoveLastLine(buffer, lines) abort
     return ['a', 'b']
+  endfunction
+
+  function RemoveLastLineOneArg(buffer) abort
+    return ['a', 'b']
+  endfunction
+
+  function! TestCallback(buffer, output)
+    return [{'lnum': 1, 'col': 1, 'text': 'xxx'}]
+  endfunction
+
+  function! SetUpLinters()
+    call ale#linter#Define('testft', {
+    \ 'name': 'testlinter',
+    \ 'callback': 'TestCallback',
+    \ 'executable': 'true',
+    \ 'command': 'true',
+    \})
   endfunction
 
 After:
@@ -42,9 +73,20 @@ After:
   delfunction AddDollars
   delfunction DoNothing
   delfunction CatLine
+  delfunction CatLineOneArg
   delfunction ReplaceWithTempFile
   delfunction RemoveLastLine
+  delfunction RemoveLastLineOneArg
+  delfunction TestCallback
+  delfunction SetUpLinters
   call ale#fix#registry#ResetToDefaults()
+  call ale#linter#Reset()
+
+  if filereadable('fix_test_file')
+    call delete('fix_test_file')
+  endif
+
+  let g:ale_fix_buffer_data = {}
 
 Given testft (A file with three lines):
   a
@@ -185,3 +227,119 @@ Execute(ALEFix should user buffer-local fixer settings):
 Expect(There should be only two lines):
   a
   b
+
+Given testft (A file with three lines):
+  a
+  b
+  c
+
+Execute(ALEFix should save files on the save event):
+  let g:ale_fix_on_save = 1
+  let g:ale_lint_on_save = 1
+  let g:ale_enabled = 1
+
+  noautocmd silent file fix_test_file
+
+  let g:ale_fixers.testft = ['AddDollars']
+
+  call SetUpLinters()
+  call ale#events#SaveEvent()
+
+  " We should save the file.
+  Assert filereadable('fix_test_file'), 'The file cannot be read'
+  AssertEqual ['$a', '$b', '$c'], readfile('fix_test_file')
+  Assert !&modified, 'The was marked as ''modified'''
+
+  " We have run the linter.
+  AssertEqual [{
+  \   'bufnr': bufnr('%'),
+  \   'lnum': 1,
+  \   'vcol': 0,
+  \   'col': 1,
+  \   'text': 'xxx',
+  \   'type': 'E',
+  \   'nr': -1,
+  \   'pattern': '',
+  \   'valid': 1,
+  \}], getloclist(0)
+
+Expect(The buffer should be modified):
+  $a
+  $b
+  $c
+
+Given testft (A file with three lines):
+  a
+  b
+  c
+
+Execute(ALEFix should still lint with no linters to be applied):
+  let g:ale_fix_on_save = 1
+  let g:ale_lint_on_save = 1
+  let g:ale_enabled = 1
+
+  noautocmd silent file fix_test_file
+
+  let g:ale_fixers.testft = []
+
+  call SetUpLinters()
+  call ale#events#SaveEvent()
+
+  Assert !filereadable('fix_test_file'), 'The file should not have been saved'
+
+  " We have run the linter.
+  AssertEqual [{
+  \   'bufnr': bufnr('%'),
+  \   'lnum': 1,
+  \   'vcol': 0,
+  \   'col': 1,
+  \   'text': 'xxx',
+  \   'type': 'E',
+  \   'nr': -1,
+  \   'pattern': '',
+  \   'valid': 1,
+  \}], getloclist(0)
+
+Expect(The buffer should be the same):
+  a
+  b
+  c
+
+Given testft (A file with three lines):
+  a
+  b
+  c
+
+Execute(ale#fix#InitBufferData() should set up the correct data):
+  noautocmd silent file fix_test_file
+
+  call ale#fix#InitBufferData(bufnr(''), 'save_file')
+
+  AssertEqual {
+  \ bufnr(''): {
+  \   'temporary_directory_list': [],
+  \   'vars': b:,
+  \   'filename': simplify(getcwd() . '/fix_test_file'),
+  \   'done': 0,
+  \   'lines_before': ['a', 'b', 'c'],
+  \   'should_save': 1,
+  \ },
+  \}, g:ale_fix_buffer_data
+
+Execute(ALEFix simple functions should be able to accept one argument, the buffer):
+  let g:ale_fixers.testft = ['RemoveLastLineOneArg']
+  ALEFix
+
+Expect(There should be only two lines):
+  a
+  b
+
+Execute(ALEFix functions returning jobs should be able to accept one argument):
+  let g:ale_fixers.testft = ['CatLine']
+  ALEFix
+
+Expect(An extra line should be added):
+  a
+  b
+  c
+  d
